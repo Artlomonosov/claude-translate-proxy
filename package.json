@@ -1,0 +1,14 @@
+{
+  "name": "claude-translate-proxy",
+  "version": "1.0.0",
+  "description": "Proxy server for Claude API to handle CORS in Figma plugin",
+  "main": "api/translate.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'No build step required for serverless functions'"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
