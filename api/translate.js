@@ -1,4 +1,4 @@
-// api/translate.js - serverless функция для Vercel
+// api/translate.js - обновлённая версия для Vercel
 
 export default async function handler(req, res) {
   // Настройка CORS
