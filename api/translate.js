@@ -72,12 +72,12 @@ ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}
     const hasCustomPrompt = customPrompt && customPrompt.trim().length > 0;
     const totalTexts = texts.length;
     
-    // Используем Haiku для простых случаев, Sonnet для сложных
+    // Используем Haiku для простых случаев, Claude 3.5 Sonnet для сложных
     let model = 'claude-3-haiku-20240307';
     let maxTokens = 4000;
     
     if (hasGlossary || hasCustomPrompt || totalTexts > 20) {
-      model = 'claude-3-sonnet-20240229';
+      model = 'claude-3-5-sonnet-20241022';
       maxTokens = 6000;
     }
     
