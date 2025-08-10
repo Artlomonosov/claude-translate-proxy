@@ -21,7 +21,8 @@ export default async function handler(req, res) {
       fromLang, 
       toLang, 
       customPrompt = '', 
-      glossaryContext = '', // Новый параметр для глоссария
+      glossaryContext = '', // Контекст глоссария
+      permanentContext = '', // Для обратной совместимости со старой версией
       apiKey 
     } = req.body;
     
@@ -32,6 +33,9 @@ export default async function handler(req, res) {
     if (!texts || texts.length === 0) {
       return res.status(400).json({ error: 'No texts to translate' });
     }
+    
+    // Используем glossaryContext, если есть, иначе permanentContext для совместимости
+    const contextText = glossaryContext || permanentContext;
     
     // Формируем контекст для Claude
     const glossaryText = glossaryContext 
@@ -157,15 +161,14 @@ ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}
     }
     
     // Логируем для отладки (только в development)
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('Translation request:', {
-        textsCount: texts.length,
-        model: model,
-        hasGlossary: hasGlossary,
-        hasCustomPrompt: hasCustomPrompt,
-        translationsCount: translations.length
-      });
-    }
+    console.log('Translation request:', {
+      textsCount: texts.length,
+      model: model,
+      hasGlossary: hasGlossary,
+      hasCustomPrompt: hasCustomPrompt,
+      translationsCount: translations.length,
+      glossaryLength: contextText ? contextText.length : 0
+    });
     
     res.json({ 
       translations,
