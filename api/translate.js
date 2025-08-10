@@ -21,7 +21,7 @@ export default async function handler(req, res) {
       texts, 
       fromLang, 
       toLang, 
-      glossary = {}, 
+      customPrompt = '', 
       useInformalTone = false, 
       preferShortForms = false,
       apiKey 
@@ -35,9 +35,9 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No texts to translate' });
     }
 
-    // Формируем контекст для Claude с глоссарием и правилами
-    const glossaryText = Object.keys(glossary).length > 0 
-      ? `\n\nГлоссарий терминов:\n${Object.entries(glossary).map(([en, ru]) => `- "${en}" → "${ru}"`).join('\n')}`
+    // Формируем контекст для Claude с кастомным промптом и правилами
+    const customContext = customPrompt 
+      ? `\n\nДополнительный контекст:\n${customPrompt}`
       : '';
 
     const editorialRules = [];
@@ -61,7 +61,7 @@ export default async function handler(req, res) {
 - Учитывай контекст UI и UX
 - Используй принятые термины для интерфейсов
 - Если текст уже на целевом языке, оставь как есть
-- Будь краток и понятен для пользователей${glossaryText}${editorialText}
+- Будь краток и понятен для пользователей${customContext}${editorialText}
 
 Тексты для перевода:
 ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}
