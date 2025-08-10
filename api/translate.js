@@ -22,6 +22,7 @@ export default async function handler(req, res) {
       fromLang, 
       toLang, 
       customPrompt = '', 
+      permanentContext = '',
       useInformalTone = false, 
       preferShortForms = false,
       apiKey 
@@ -35,9 +36,13 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No texts to translate' });
     }
 
-    // Формируем контекст для Claude с кастомным промптом и правилами
-    const customContext = customPrompt 
-      ? `\n\nДополнительный контекст:\n${customPrompt}`
+    // Формируем контекст для Claude
+    const permanentContextText = permanentContext 
+      ? `\n\nПостоянный контекст (применяется ко всем переводам):\n${permanentContext}`
+      : '';
+
+    const customContextText = customPrompt 
+      ? `\n\nДополнительный контекст для этого фрейма:\n${customPrompt}`
       : '';
 
     const editorialRules = [];
@@ -61,7 +66,7 @@ export default async function handler(req, res) {
 - Учитывай контекст UI и UX
 - Используй принятые термины для интерфейсов
 - Если текст уже на целевом языке, оставь как есть
-- Будь краток и понятен для пользователей${customContext}${editorialText}
+- Будь краток и понятен для пользователей${permanentContextText}${customContextText}${editorialText}
 
 Тексты для перевода:
 ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}
