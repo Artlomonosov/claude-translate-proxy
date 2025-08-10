@@ -23,8 +23,6 @@ export default async function handler(req, res) {
       toLang, 
       customPrompt = '', 
       permanentContext = '',
-      useInformalTone = false, 
-      preferShortForms = false,
       apiKey 
     } = req.body;
 
@@ -45,18 +43,6 @@ export default async function handler(req, res) {
       ? `\n\nДополнительный контекст для этого фрейма:\n${customPrompt}`
       : '';
 
-    const editorialRules = [];
-    if (useInformalTone) {
-      editorialRules.push('- Используй неформальное обращение на "ты" вместо "вы"');
-    }
-    if (preferShortForms) {
-      editorialRules.push('- Предпочитай короткие и ёмкие формулировки');
-    }
-
-    const editorialText = editorialRules.length > 0 
-      ? `\n\nПравила редполитики:\n${editorialRules.join('\n')}`
-      : '';
-
     const prompt = `Ты — профессиональный переводчик интерфейсов. Переведи следующие тексты с языка "${fromLang}" на "${toLang}".
 
 Контекст: Это тексты пользовательского интерфейса (кнопки, заголовки, сообщения).
@@ -66,7 +52,7 @@ export default async function handler(req, res) {
 - Учитывай контекст UI и UX
 - Используй принятые термины для интерфейсов
 - Если текст уже на целевом языке, оставь как есть
-- Будь краток и понятен для пользователей${permanentContextText}${customContextText}${editorialText}
+- Будь краток и понятен для пользователей${permanentContextText}${customContextText}
 
 Тексты для перевода:
 ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}
