@@ -320,7 +320,19 @@ async function getFromRedisCache(redisUrl, redisToken, key) {
     }
     
     const data = await response.json();
-    return data.result;
+    
+    // Проверяем, что result существует и не null
+    if (data.result === null || data.result === undefined) {
+      return null;
+    }
+    
+    // Если результат - строка в кавычках, убираем их
+    let result = data.result;
+    if (typeof result === 'string' && result.startsWith('"') && result.endsWith('"')) {
+      result = result.slice(1, -1);
+    }
+    
+    return result;
   } catch (error) {
     console.warn('Redis GET error:', error);
     return null;
@@ -334,9 +346,9 @@ async function saveToRedisCache(redisUrl, redisToken, key, value, ttl) {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${redisToken}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'text/plain'
       },
-      body: JSON.stringify(value)
+      body: value // Отправляем как обычную строку, не JSON
     });
     
     if (!response.ok) {
