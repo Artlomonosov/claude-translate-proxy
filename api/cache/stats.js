@@ -1,4 +1,4 @@
-// api/cache/stats.js - расширенная диагностика Redis
+// api/cache/stats.js - прямые HTTP запросы к Redis без библиотеки
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -17,110 +17,100 @@ export default async function handler(req, res) {
     const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
     
-    console.log('=== Redis Configuration Check ===');
-    console.log('URL exists:', !!redisUrl);
-    console.log('URL value:', redisUrl);
-    console.log('Token exists:', !!redisToken);
+    console.log('=== Direct HTTP Redis Test ===');
+    console.log('URL:', redisUrl);
     console.log('Token length:', redisToken ? redisToken.length : 0);
-    console.log('Token start:', redisToken ? redisToken.substring(0, 10) + '...' : 'none');
     
     if (!redisUrl || !redisToken) {
       return res.json({
-        error: 'Missing environment variables',
-        debug: {
-          hasUrl: !!redisUrl,
-          hasToken: !!redisToken,
-          url: redisUrl || 'missing',
-          tokenLength: redisToken ? redisToken.length : 0
+        error: 'Missing Redis credentials',
+        hasUrl: !!redisUrl,
+        hasToken: !!redisToken
+      });
+    }
+    
+    // Тест 1: Прямой HTTP ping
+    console.log('Testing direct HTTP ping...');
+    try {
+      const pingResponse = await fetch(`${redisUrl}/ping`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${redisToken}`,
+          'Content-Type': 'application/json'
         }
       });
-    }
-    
-    // Тест 1: Импорт библиотеки
-    console.log('=== Testing Redis Import ===');
-    let Redis;
-    try {
-      const module = await import('@upstash/redis');
-      Redis = module.Redis;
-      console.log('✅ Redis imported successfully');
-    } catch (importError) {
-      console.error('❌ Redis import failed:', importError);
-      return res.json({
-        error: 'Redis import failed',
-        importError: importError.message,
-        step: 'import'
-      });
-    }
-    
-    // Тест 2: Создание клиента через fromEnv
-    console.log('=== Testing Redis.fromEnv() ===');
-    let redis;
-    try {
-      redis = Redis.fromEnv();
-      console.log('✅ Redis client created via fromEnv()');
-    } catch (envError) {
-      console.error('❌ Redis.fromEnv() failed:', envError);
       
-      // Тест 3: Создание клиента вручную
-      console.log('=== Testing manual Redis client ===');
-      try {
-        redis = new Redis({
-          url: redisUrl,
-          token: redisToken,
-        });
-        console.log('✅ Redis client created manually');
-      } catch (manualError) {
-        console.error('❌ Manual Redis client failed:', manualError);
+      console.log('Ping response status:', pingResponse.status);
+      const pingData = await pingResponse.text();
+      console.log('Ping response data:', pingData);
+      
+      if (!pingResponse.ok) {
         return res.json({
-          error: 'Failed to create Redis client',
-          envError: envError.message,
-          manualError: manualError.message,
-          step: 'client_creation'
+          error: 'Redis HTTP ping failed',
+          status: pingResponse.status,
+          response: pingData,
+          step: 'http_ping'
         });
       }
-    }
-    
-    // Тест 4: Простейший запрос
-    console.log('=== Testing Redis Connection ===');
-    try {
-      const pingResult = await redis.ping();
-      console.log('✅ Redis ping successful:', pingResult);
+      
     } catch (pingError) {
-      console.error('❌ Redis ping failed:', pingError);
+      console.error('Ping fetch error:', pingError);
       return res.json({
-        error: 'Redis ping failed',
-        pingError: pingError.message,
-        errorType: pingError.name,
-        step: 'ping'
+        error: 'Ping fetch failed',
+        message: pingError.message,
+        type: pingError.name,
+        step: 'ping_fetch'
       });
     }
     
-    // Тест 5: Получение размера базы
-    console.log('=== Testing Redis Operations ===');
+    // Тест 2: Получение размера базы данных
+    console.log('Testing dbsize...');
     try {
-      const dbsize = await redis.dbsize();
-      console.log('✅ Redis dbsize successful:', dbsize);
-      
-      return res.json({
-        success: true,
-        totalEntries: dbsize,
-        cacheType: 'Redis (Upstash)',
-        status: 'connected',
-        debug: {
-          url: redisUrl,
-          tokenLength: redisToken.length,
-          pingResult: 'PONG',
-          dbsize: dbsize
+      const dbsizeResponse = await fetch(`${redisUrl}/dbsize`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${redisToken}`,
+          'Content-Type': 'application/json'
         }
       });
       
-    } catch (dbError) {
-      console.error('❌ Redis dbsize failed:', dbError);
+      console.log('Dbsize response status:', dbsizeResponse.status);
+      const dbsizeData = await dbsizeResponse.json();
+      console.log('Dbsize response data:', dbsizeData);
+      
+      if (!dbsizeResponse.ok) {
+        return res.json({
+          error: 'Redis dbsize HTTP failed',
+          status: dbsizeResponse.status,
+          response: dbsizeData,
+          step: 'http_dbsize'
+        });
+      }
+      
+      // Успех!
       return res.json({
-        error: 'Redis operation failed',
-        dbError: dbError.message,
-        errorType: dbError.name,
-        step: 'dbsize'
+        success: true,
+        totalEntries: dbsizeData.result || 0,
+        memoryUsage: 0,
+        hitsToday: 0,
+        tokensSaved: (dbsizeData.result || 0) * 3,
+        topTranslations: [],
+        cacheType: 'Redis (Direct HTTP)',
+        status: 'connected',
+        debug: {
+          pingWorked: true,
+          dbsize: dbsizeData.result,
+          httpMethod: 'direct'
+        }
+      });
+      
+    } catch (dbsizeError) {
+      console.error('Dbsize fetch error:', dbsizeError);
+      return res.json({
+        error: 'Dbsize fetch failed',
+        message: dbsizeError.message,
+        type: dbsizeError.name,
+        step: 'dbsize_fetch'
       });
     }
     
@@ -130,7 +120,7 @@ export default async function handler(req, res) {
       error: 'Unexpected error',
       message: error.message,
       type: error.name,
-      stack: error.stack?.split('\n').slice(0, 5)
+      step: 'general'
     });
   }
 }
