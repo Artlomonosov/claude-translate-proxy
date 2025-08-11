@@ -160,12 +160,11 @@ ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}
       translations.splice(texts.length);
     }
     
-    // Логируем для отладки (только в development)
+    // Логируем для отладки
     console.log('Translation request:', {
       textsCount: texts.length,
       model: model,
       hasGlossary: hasGlossary,
-      relevantTermsCount: relevantTermsCount,
       hasCustomPrompt: hasCustomPrompt,
       translationsCount: translations.length,
       glossaryLength: contextText ? contextText.length : 0
@@ -178,7 +177,6 @@ ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}
         translatedCount: translations.length,
         model: model,
         hasGlossary: hasGlossary,
-        relevantTermsCount: relevantTermsCount,
         hasCustomPrompt: hasCustomPrompt
       }
     });
