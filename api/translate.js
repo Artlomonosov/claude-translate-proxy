@@ -165,6 +165,7 @@ ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}
       textsCount: texts.length,
       model: model,
       hasGlossary: hasGlossary,
+      relevantTermsCount: relevantTermsCount,
       hasCustomPrompt: hasCustomPrompt,
       translationsCount: translations.length,
       glossaryLength: contextText ? contextText.length : 0
@@ -177,6 +178,7 @@ ${texts.map((text, i) => `${i + 1}. ${text}`).join('\n')}
         translatedCount: translations.length,
         model: model,
         hasGlossary: hasGlossary,
+        relevantTermsCount: relevantTermsCount,
         hasCustomPrompt: hasCustomPrompt
       }
     });
