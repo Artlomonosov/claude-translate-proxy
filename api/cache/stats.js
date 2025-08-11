@@ -1,4 +1,4 @@
-// api/cache/stats.js - ТОЛЬКО для статистики кеша
+// api/cache/stats.js - расширенная диагностика Redis
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -14,93 +14,123 @@ export default async function handler(req, res) {
   }
   
   try {
-    // Проверяем наличие переменных Redis
     const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
     
-    console.log('Checking Redis config...');
+    console.log('=== Redis Configuration Check ===');
     console.log('URL exists:', !!redisUrl);
+    console.log('URL value:', redisUrl);
     console.log('Token exists:', !!redisToken);
-    console.log('URL preview:', redisUrl ? redisUrl.substring(0, 30) + '...' : 'not set');
     console.log('Token length:', redisToken ? redisToken.length : 0);
+    console.log('Token start:', redisToken ? redisToken.substring(0, 10) + '...' : 'none');
     
     if (!redisUrl || !redisToken) {
       return res.json({
-        error: 'Redis environment variables missing',
-        hasUrl: !!redisUrl,
-        hasToken: !!redisToken,
-        totalEntries: 0,
-        cacheType: 'Redis (not configured)',
-        status: 'env_missing'
+        error: 'Missing environment variables',
+        debug: {
+          hasUrl: !!redisUrl,
+          hasToken: !!redisToken,
+          url: redisUrl || 'missing',
+          tokenLength: redisToken ? redisToken.length : 0
+        }
       });
     }
     
-    // Пробуем импортировать и подключиться к Redis
+    // Тест 1: Импорт библиотеки
+    console.log('=== Testing Redis Import ===');
+    let Redis;
     try {
-      const { Redis } = await import('@upstash/redis');
-      const redis = Redis.fromEnv();
+      const module = await import('@upstash/redis');
+      Redis = module.Redis;
+      console.log('✅ Redis imported successfully');
+    } catch (importError) {
+      console.error('❌ Redis import failed:', importError);
+      return res.json({
+        error: 'Redis import failed',
+        importError: importError.message,
+        step: 'import'
+      });
+    }
+    
+    // Тест 2: Создание клиента через fromEnv
+    console.log('=== Testing Redis.fromEnv() ===');
+    let redis;
+    try {
+      redis = Redis.fromEnv();
+      console.log('✅ Redis client created via fromEnv()');
+    } catch (envError) {
+      console.error('❌ Redis.fromEnv() failed:', envError);
       
-      console.log('Redis client created, testing connection...');
-      
-      // Тестируем подключение
-      const dbsize = await redis.dbsize();
-      console.log('Redis connected successfully, dbsize:', dbsize);
-      
-      // Получаем примеры ключей
-      const keys = await redis.keys('*');
-      const sampleKeys = keys.slice(0, 5);
-      
-      console.log('Found keys:', sampleKeys.length);
-      
-      const topTranslations = [];
-      for (const key of sampleKeys) {
-        try {
-          const value = await redis.get(key);
-          if (value) {
-            topTranslations.push({
-              original: key.substring(0, 8) + '...',
-              translation: typeof value === 'string' ? value.substring(0, 50) : 'complex_value',
-              hits: 1
-            });
-          }
-        } catch (keyError) {
-          console.warn('Error reading key:', key, keyError.message);
-        }
+      // Тест 3: Создание клиента вручную
+      console.log('=== Testing manual Redis client ===');
+      try {
+        redis = new Redis({
+          url: redisUrl,
+          token: redisToken,
+        });
+        console.log('✅ Redis client created manually');
+      } catch (manualError) {
+        console.error('❌ Manual Redis client failed:', manualError);
+        return res.json({
+          error: 'Failed to create Redis client',
+          envError: envError.message,
+          manualError: manualError.message,
+          step: 'client_creation'
+        });
       }
+    }
+    
+    // Тест 4: Простейший запрос
+    console.log('=== Testing Redis Connection ===');
+    try {
+      const pingResult = await redis.ping();
+      console.log('✅ Redis ping successful:', pingResult);
+    } catch (pingError) {
+      console.error('❌ Redis ping failed:', pingError);
+      return res.json({
+        error: 'Redis ping failed',
+        pingError: pingError.message,
+        errorType: pingError.name,
+        step: 'ping'
+      });
+    }
+    
+    // Тест 5: Получение размера базы
+    console.log('=== Testing Redis Operations ===');
+    try {
+      const dbsize = await redis.dbsize();
+      console.log('✅ Redis dbsize successful:', dbsize);
       
       return res.json({
+        success: true,
         totalEntries: dbsize,
-        memoryUsage: keys.length * 100, // Примерная оценка
-        hitsToday: dbsize,
-        tokensSaved: dbsize * 3,
-        topTranslations: topTranslations,
         cacheType: 'Redis (Upstash)',
         status: 'connected',
         debug: {
-          totalKeys: keys.length,
-          sampleKeysCount: sampleKeys.length
+          url: redisUrl,
+          tokenLength: redisToken.length,
+          pingResult: 'PONG',
+          dbsize: dbsize
         }
       });
       
-    } catch (redisError) {
-      console.error('Redis error:', redisError);
-      
+    } catch (dbError) {
+      console.error('❌ Redis dbsize failed:', dbError);
       return res.json({
         error: 'Redis operation failed',
-        errorType: redisError.name || 'Unknown',
-        errorMessage: redisError.message || 'Unknown error',
-        totalEntries: 0,
-        cacheType: 'Redis (connection failed)',
-        status: 'redis_error'
+        dbError: dbError.message,
+        errorType: dbError.name,
+        step: 'dbsize'
       });
     }
     
   } catch (error) {
-    console.error('General error in stats:', error);
+    console.error('=== General Error ===', error);
     return res.status(500).json({ 
-      error: 'Internal server error',
+      error: 'Unexpected error',
       message: error.message,
-      type: error.name || 'Unknown'
+      type: error.name,
+      stack: error.stack?.split('\n').slice(0, 5)
     });
   }
 }
