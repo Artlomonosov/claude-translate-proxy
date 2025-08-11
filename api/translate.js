@@ -1,22 +1,8 @@
-// api/translate.js - версия с Redis кешированием
+// api/translate.js - версия с прямыми HTTP запросами к Redis
 import { createHash } from 'crypto';
-import { Redis } from '@upstash/redis';
-
-// Инициализация Redis клиента
-let redis;
-try {
-  redis = Redis.fromEnv();
-} catch (error) {
-  console.warn('Redis not configured, falling back to in-memory cache');
-  redis = null;
-}
-
-// Fallback in-memory кеш если Redis недоступен
-const fallbackCache = new Map();
 
 // Настройки кеша
-const CACHE_TTL = 24 * 60 * 60; // 24 часа в секундах (для Redis)
-const MAX_FALLBACK_CACHE_SIZE = 1000;
+const CACHE_TTL = 24 * 60 * 60; // 24 часа в секундах
 
 export default async function handler(req, res) {
   // Настройка CORS
@@ -79,6 +65,13 @@ export default async function handler(req, res) {
       maxTokens = 6000;
     }
     
+    // Получаем настройки Redis
+    const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+    const redisAvailable = !!(redisUrl && redisToken);
+    
+    console.log('Redis available:', redisAvailable, 'Cache enabled:', useCache);
+    
     // Кеширование переводов
     let cacheHits = 0;
     let cacheMisses = 0;
@@ -86,8 +79,8 @@ export default async function handler(req, res) {
     const textsToTranslate = [];
     const textIndexMapping = [];
     
-    if (useCache) {
-      console.log('Using cache:', redis ? 'Redis' : 'fallback in-memory');
+    if (useCache && redisAvailable) {
+      console.log('Using Redis cache for', texts.length, 'texts');
       
       for (let i = 0; i < texts.length; i++) {
         const text = texts[i];
@@ -96,28 +89,16 @@ export default async function handler(req, res) {
         let cachedResult = null;
         
         try {
-          if (redis) {
-            // Пробуем получить из Redis
-            cachedResult = await redis.get(cacheKey);
-            if (cachedResult && typeof cachedResult === 'string') {
-              cachedResult = { translation: cachedResult, timestamp: Date.now() };
-            }
-          } else {
-            // Fallback к in-memory кешу
-            cachedResult = fallbackCache.get(cacheKey);
-            if (cachedResult && isCacheExpired(cachedResult.timestamp)) {
-              fallbackCache.delete(cacheKey);
-              cachedResult = null;
-            }
-          }
+          // Получаем из Redis через HTTP
+          cachedResult = await getFromRedisCache(redisUrl, redisToken, cacheKey);
         } catch (error) {
-          console.warn('Cache read error:', error);
+          console.warn('Cache read error for key', cacheKey, ':', error.message);
           cachedResult = null;
         }
         
         if (cachedResult) {
           // Найдено в кеше
-          cachedTranslations[i] = cachedResult.translation;
+          cachedTranslations[i] = cachedResult;
           cacheHits++;
         } else {
           // Нет в кеше, нужно перевести
@@ -130,7 +111,8 @@ export default async function handler(req, res) {
       
       console.log(`Cache stats: ${cacheHits} hits, ${cacheMisses} misses`);
     } else {
-      // Кеш отключен, переводим все
+      // Кеш отключен или недоступен, переводим все
+      console.log('Cache disabled or unavailable, translating all texts');
       textsToTranslate.push(...texts);
       textIndexMapping.push(...texts.map((_, i) => i));
       cacheMisses = texts.length;
@@ -140,6 +122,8 @@ export default async function handler(req, res) {
     
     // Переводим только те тексты, которых нет в кеше
     if (textsToTranslate.length > 0) {
+      console.log('Translating', textsToTranslate.length, 'texts with Claude');
+      
       // Улучшенный промпт с акцентом на глоссарий
       const prompt = `Ты — профессиональный переводчик интерфейсов. Переведи следующие тексты с языка "${fromLang}" на "${toLang}".
 
@@ -236,30 +220,18 @@ ${textsToTranslate.map((text, i) => `${i + 1}. ${text}`).join('\n')}
       }
       
       // Сохраняем новые переводы в кеш
-      if (useCache) {
+      if (useCache && redisAvailable) {
+        console.log('Saving', newTranslations.length, 'translations to Redis cache');
+        
         for (let i = 0; i < textsToTranslate.length; i++) {
           const text = textsToTranslate[i];
           const translation = newTranslations[i];
           const cacheKey = generateCacheKey(text, fromLang, toLang, contextText, customPrompt);
           
           try {
-            if (redis) {
-              // Сохраняем в Redis с TTL
-              await redis.setex(cacheKey, CACHE_TTL, translation);
-            } else {
-              // Fallback к in-memory кешу
-              if (fallbackCache.size >= MAX_FALLBACK_CACHE_SIZE) {
-                const firstKey = fallbackCache.keys().next().value;
-                fallbackCache.delete(firstKey);
-              }
-              
-              fallbackCache.set(cacheKey, {
-                translation: translation,
-                timestamp: Date.now()
-              });
-            }
+            await saveToRedisCache(redisUrl, redisToken, cacheKey, translation, CACHE_TTL);
           } catch (error) {
-            console.warn('Cache write error:', error);
+            console.warn('Cache write error for key', cacheKey, ':', error.message);
           }
         }
       }
@@ -275,7 +247,7 @@ ${textsToTranslate.map((text, i) => `${i + 1}. ${text}`).join('\n')}
     }
     
     // Логируем для отладки
-    console.log('Translation request:', {
+    console.log('Translation completed:', {
       textsCount: texts.length,
       model: model,
       hasGlossary: hasGlossary,
@@ -283,7 +255,7 @@ ${textsToTranslate.map((text, i) => `${i + 1}. ${text}`).join('\n')}
       translationsCount: finalTranslations.length,
       cacheHits: cacheHits,
       cacheMisses: cacheMisses,
-      cacheType: redis ? 'Redis' : 'in-memory'
+      cacheType: redisAvailable ? 'Redis HTTP' : 'disabled'
     });
     
     res.json({ 
@@ -298,7 +270,7 @@ ${textsToTranslate.map((text, i) => `${i + 1}. ${text}`).join('\n')}
         cacheMisses: cacheMisses,
         tokensRequired: cacheMisses,
         tokensSaved: cacheHits,
-        cacheType: redis ? 'Redis' : 'in-memory'
+        cacheType: redisAvailable ? 'Redis HTTP' : 'disabled'
       }
     });
     
@@ -329,10 +301,51 @@ function generateCacheKey(text, fromLang, toLang, context, customPrompt) {
   return createHash('sha256').update(data).digest('hex').substring(0, 16);
 }
 
-// Функция проверки истечения кеша (для fallback)
-function isCacheExpired(timestamp) {
-  return Date.now() - timestamp > (CACHE_TTL * 1000);
+// Функция получения из Redis кеша через HTTP
+async function getFromRedisCache(redisUrl, redisToken, key) {
+  try {
+    const response = await fetch(`${redisUrl}/get/${encodeURIComponent(key)}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${redisToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      if (response.status === 404) {
+        return null; // Ключ не найден
+      }
+      throw new Error(`Redis GET failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    return data.result;
+  } catch (error) {
+    console.warn('Redis GET error:', error);
+    return null;
+  }
 }
 
-// Экспортируем Redis клиент для других endpoints
-export { redis };
+// Функция сохранения в Redis кеш через HTTP
+async function saveToRedisCache(redisUrl, redisToken, key, value, ttl) {
+  try {
+    const response = await fetch(`${redisUrl}/setex/${encodeURIComponent(key)}/${ttl}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${redisToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(value)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Redis SETEX failed: ${response.status}`);
+    }
+    
+    return true;
+  } catch (error) {
+    console.warn('Redis SETEX error:', error);
+    return false;
+  }
+}
