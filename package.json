@@ -1,12 +1,14 @@
 {
   "name": "claude-translate-proxy",
   "version": "1.0.0",
-  "description": "Proxy server for Claude API to handle CORS in Figma plugin",
+  "description": "Proxy server for Claude API to handle CORS in Figma plugin with Redis caching",
   "type": "module",
   "scripts": {
     "dev": "vercel dev"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@upstash/redis": "^1.25.1"
+  },
   "engines": {
     "node": ">=18.0.0"
   }
