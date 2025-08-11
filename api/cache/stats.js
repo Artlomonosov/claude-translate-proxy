@@ -1,6 +1,4 @@
-// api/cache/stats.js - получение статистики кеша из Redis
-import { Redis } from '@upstash/redis';
-
+// api/cache/stats.js - ТОЛЬКО для статистики кеша
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -16,235 +14,93 @@ export default async function handler(req, res) {
   }
   
   try {
-    const redis = Redis.fromEnv();
+    // Проверяем наличие переменных Redis
+    const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
     
-    // Получаем информацию о базе данных
-    const info = await redis.info();
-    const dbsize = await redis.dbsize();
+    console.log('Checking Redis config...');
+    console.log('URL exists:', !!redisUrl);
+    console.log('Token exists:', !!redisToken);
+    console.log('URL preview:', redisUrl ? redisUrl.substring(0, 30) + '...' : 'not set');
+    console.log('Token length:', redisToken ? redisToken.length : 0);
     
-    // Парсим информацию Redis
-    const memoryUsage = extractInfoValue(info, 'used_memory');
-    const totalCommands = extractInfoValue(info, 'total_commands_processed');
+    if (!redisUrl || !redisToken) {
+      return res.json({
+        error: 'Redis environment variables missing',
+        hasUrl: !!redisUrl,
+        hasToken: !!redisToken,
+        totalEntries: 0,
+        cacheType: 'Redis (not configured)',
+        status: 'env_missing'
+      });
+    }
     
-    // Получаем примеры ключей (первые 10)
-    const keys = await redis.keys('*');
-    const sampleKeys = keys.slice(0, 10);
-    
-    const topTranslations = [];
-    for (const key of sampleKeys) {
-      try {
-        const value = await redis.get(key);
-        if (value) {
-          // Показываем первые 20 символов ключа и полный перевод
-          topTranslations.push({
-            original: key.substring(0, 8) + '...',
-            translation: typeof value === 'string' ? value : JSON.stringify(value),
-            hits: 1 // Redis не ведет счетчик обращений автоматически
-          });
+    // Пробуем импортировать и подключиться к Redis
+    try {
+      const { Redis } = await import('@upstash/redis');
+      const redis = Redis.fromEnv();
+      
+      console.log('Redis client created, testing connection...');
+      
+      // Тестируем подключение
+      const dbsize = await redis.dbsize();
+      console.log('Redis connected successfully, dbsize:', dbsize);
+      
+      // Получаем примеры ключей
+      const keys = await redis.keys('*');
+      const sampleKeys = keys.slice(0, 5);
+      
+      console.log('Found keys:', sampleKeys.length);
+      
+      const topTranslations = [];
+      for (const key of sampleKeys) {
+        try {
+          const value = await redis.get(key);
+          if (value) {
+            topTranslations.push({
+              original: key.substring(0, 8) + '...',
+              translation: typeof value === 'string' ? value.substring(0, 50) : 'complex_value',
+              hits: 1
+            });
+          }
+        } catch (keyError) {
+          console.warn('Error reading key:', key, keyError.message);
         }
-      } catch (error) {
-        console.warn('Error reading key:', key, error);
       }
-    }
-    
-    const stats = {
-      totalEntries: dbsize,
-      memoryUsage: parseInt(memoryUsage) || 0,
-      hitsToday: parseInt(totalCommands) || 0,
-      tokensSaved: dbsize * 5, // Примерная оценка
-      topTranslations: topTranslations,
-      cacheType: 'Redis (Upstash)',
-      status: 'connected'
-    };
-    
-    res.json(stats);
-  } catch (error) {
-    console.error('Redis stats error:', error);
-    
-    // Fallback если Redis недоступен
-    res.json({
-      totalEntries: 0,
-      memoryUsage: 0,
-      hitsToday: 0,
-      tokensSaved: 0,
-      topTranslations: [],
-      cacheType: 'Redis (disconnected)',
-      status: 'disconnected',
-      error: 'Redis connection failed'
-    });
-  }
-}
-
-function extractInfoValue(info, key) {
-  const lines = info.split('\n');
-  for (const line of lines) {
-    if (line.startsWith(key + ':')) {
-      return line.split(':')[1]?.trim();
-    }
-  }
-  return '0';
-}
-
-// api/cache/clear.js - очистка Redis кеша
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-  
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-  
-  try {
-    const redis = Redis.fromEnv();
-    
-    // Получаем количество ключей перед очисткой
-    const keysCount = await redis.dbsize();
-    
-    // Очищаем всю базу данных
-    await redis.flushdb();
-    
-    res.json({ 
-      success: true, 
-      deletedEntries: keysCount,
-      message: `Cleared ${keysCount} cache entries from Redis`
-    });
-  } catch (error) {
-    console.error('Redis clear error:', error);
-    res.status(500).json({ 
-      error: 'Failed to clear Redis cache: ' + error.message 
-    });
-  }
-}
-
-// api/cache/export.js - экспорт Redis кеша
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-  
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-  
-  try {
-    const redis = Redis.fromEnv();
-    
-    // Получаем все ключи
-    const keys = await redis.keys('*');
-    
-    // Ограничиваем экспорт для производительности
-    const maxKeys = Math.min(keys.length, 10000);
-    const keysToExport = keys.slice(0, maxKeys);
-    
-    const entries = {};
-    
-    // Получаем значения для каждого ключа
-    for (const key of keysToExport) {
-      try {
-        const value = await redis.get(key);
-        const ttl = await redis.ttl(key);
-        
-        entries[key] = {
-          translation: value,
-          timestamp: Date.now(),
-          ttl: ttl > 0 ? ttl : null
-        };
-      } catch (error) {
-        console.warn('Error exporting key:', key, error);
-      }
-    }
-    
-    const cacheData = {
-      version: '1.1',
-      exported: new Date().toISOString(),
-      cacheType: 'Redis',
-      totalKeys: keys.length,
-      exportedKeys: keysToExport.length,
-      entries: entries
-    };
-    
-    res.json(cacheData);
-  } catch (error) {
-    console.error('Redis export error:', error);
-    res.status(500).json({ 
-      error: 'Failed to export Redis cache: ' + error.message 
-    });
-  }
-}
-
-// api/cache/import.js - импорт в Redis кеш
-export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
-  
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-  
-  try {
-    const redis = Redis.fromEnv();
-    const { entries } = req.body;
-    
-    if (!entries || typeof entries !== 'object') {
-      return res.status(400).json({ error: 'Invalid cache data format' });
-    }
-    
-    let importedEntries = 0;
-    let errors = 0;
-    
-    const defaultTTL = 24 * 60 * 60; // 24 часа
-    
-    for (const [key, value] of Object.entries(entries)) {
-      try {
-        let translation;
-        let ttl = defaultTTL;
-        
-        if (typeof value === 'string') {
-          translation = value;
-        } else if (value && typeof value.translation === 'string') {
-          translation = value.translation;
-          ttl = value.ttl || defaultTTL;
-        } else {
-          continue; // Пропускаем невалидные записи
+      
+      return res.json({
+        totalEntries: dbsize,
+        memoryUsage: keys.length * 100, // Примерная оценка
+        hitsToday: dbsize,
+        tokensSaved: dbsize * 3,
+        topTranslations: topTranslations,
+        cacheType: 'Redis (Upstash)',
+        status: 'connected',
+        debug: {
+          totalKeys: keys.length,
+          sampleKeysCount: sampleKeys.length
         }
-        
-        // Импортируем с TTL
-        await redis.setex(key, ttl, translation);
-        importedEntries++;
-        
-      } catch (error) {
-        console.warn('Error importing key:', key, error);
-        errors++;
-      }
+      });
+      
+    } catch (redisError) {
+      console.error('Redis error:', redisError);
+      
+      return res.json({
+        error: 'Redis operation failed',
+        errorType: redisError.name || 'Unknown',
+        errorMessage: redisError.message || 'Unknown error',
+        totalEntries: 0,
+        cacheType: 'Redis (connection failed)',
+        status: 'redis_error'
+      });
     }
     
-    res.json({ 
-      success: true, 
-      importedEntries: importedEntries,
-      errors: errors,
-      message: `Imported ${importedEntries} entries to Redis cache`
-    });
   } catch (error) {
-    console.error('Redis import error:', error);
-    res.status(500).json({ 
-      error: 'Failed to import to Redis cache: ' + error.message 
+    console.error('General error in stats:', error);
+    return res.status(500).json({ 
+      error: 'Internal server error',
+      message: error.message,
+      type: error.name || 'Unknown'
     });
   }
 }
